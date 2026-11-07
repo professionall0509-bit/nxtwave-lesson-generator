@@ -1,5 +1,6 @@
 
 import json
+from pathlib import Path
 
 from workflow.graph import lesson_workflow
 from memory.database import (
@@ -9,6 +10,8 @@ from memory.database import (
     learn_from_rejections,
     get_learning_rules
 )
+
+OUTPUT_DIR = Path(__file__).parent / "outputs"
 
 
 def build_memory_feedback(previous_runs, learning_rules):
@@ -31,6 +34,31 @@ def build_memory_feedback(previous_runs, learning_rules):
         )
 
     return "\n".join(dict.fromkeys(feedback_parts))
+
+
+def save_outputs(result):
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Save the lesson only when it passes evaluation.
+    if result["final_lesson"]:
+        lesson_path = OUTPUT_DIR / "final_lesson.md"
+        lesson_path.write_text(
+            result["final_lesson"],
+            encoding="utf-8"
+        )
+        print(f"\nFinal lesson saved to: {lesson_path}")
+
+    # Save the rejection log for every run.
+    rejection_path = OUTPUT_DIR / "rejection_log.json"
+    rejection_path.write_text(
+        json.dumps(
+            result["rejection_log"],
+            indent=2,
+            ensure_ascii=False
+        ),
+        encoding="utf-8"
+    )
+    print(f"Rejection log saved to: {rejection_path}")
 
 
 def main():
@@ -74,6 +102,9 @@ def main():
     )
 
     learn_from_rejections(result["rejection_log"])
+
+    # Save generated files.
+    save_outputs(result)
 
     print("\n========== WORKFLOW RESULT ==========")
     print(f"Status: {result['status']}")

@@ -68,10 +68,55 @@ def extract_evidence(lesson: str, criterion: str) -> str:
 
         lower_line = line.lower()
 
-        if any(word in lower_line for word in keywords[criterion]):
+        if criterion == "coherent_teaching_flow":
+            if any(
+                word in lower_line
+                for word in [
+                    "introduction", "first", "next", "then",
+                    "finally", "step", "summary", "in conclusion"
+                ]
+            ):
+                return line
+
+        elif any(word in lower_line for word in keywords[criterion]):
             return line
 
     return ""
+
+
+def detect_unsupported_policy_claims(lesson: str) -> list:
+    """Detect potentially misleading RAG explanations and unsupported policy figures."""
+
+    patterns = [
+        # Unsupported claims about company policies.
+        r"\b(?:official|company|corporate)\s+policy\b",
+        r"\b(?:must|shall|required to)\b.{0,100}\b\d+\s*(?:days?|weeks?|months?|years?)\b",
+        r"\b(?:full refund|guaranteed refund|mandatory refund)\b",
+        r"\b(?:return|refund)\s+policy\b.{0,150}\b\d+\b",
+
+        # Specific return/refund periods presented as facts.
+        r"\b(?:returned|return|refund|refundable|exchange)\b"
+        r".{0,100}\b\d+\s*(?:days?|weeks?)\b",
+
+        # Misleading claims that retrieval automatically changes
+        # the model's permanent memory.
+        r"\b(?:adds?|stores?|saves?)\b.{0,80}"
+        r"\b(?:retrieved information|retrieved data|retrieved text|"
+        r"external information|external data)\b.{0,80}"
+        r"\b(?:permanent|long.term)?\s*memory\b",
+
+        r"\b(?:retrieved information|retrieved data|retrieved text)\b"
+        r".{0,80}\b(?:becomes?|is stored in|gets saved in)\b"
+        r".{0,80}\b(?:permanent|long.term)?\s*memory\b",
+    ]
+
+    findings = []
+
+    for pattern in patterns:
+        matches = re.findall(pattern, lesson, flags=re.IGNORECASE)
+        findings.extend(matches)
+
+    return list(dict.fromkeys(findings))
 
 
 def evaluate_lesson(topic: str, lesson: str) -> dict:
@@ -102,10 +147,38 @@ LESSON TO EVALUATE:
 Evaluate these six criteria:
 
 1. accuracy_and_grounding:
-   Are explanations technically correct?
-   Are factual claims supported or appropriately qualified?
-   For RAG, it can reduce hallucinations but cannot guarantee correctness.
-   Flag invented real-world policies presented as facts.
+   Check every important factual and technical claim.
+
+   For RAG, verify that:
+   - RAG stands for Retrieval-Augmented Generation.
+   - RAG retrieves relevant information from external sources.
+   - Retrieved information is provided to the language model
+     to help generate an answer.
+   - RAG can reduce hallucinations but cannot eliminate them.
+   - RAG does not guarantee that every answer is correct.
+
+   Check for unsupported or invented information:
+   - Flag fabricated prices, percentages, dates, deadlines, return periods, company policies, and other specific figures.
+   - Flag fictional policies presented as facts from real companies.
+   - Flag claims that information came from a real document when no document was provided.
+   - Allow clearly labelled hypothetical examples, but do not allow invented details to be presented as verified facts.
+
+   PASS only when the lesson is technically accurate and contains no unsupported factual claims.
+   Otherwise, FAIL.
+
+STRICT ACCURACY AND GROUNDING RULES:
+
+1. RAG stands for Retrieval-Augmented Generation.
+2. Retrieved information is provided to the language model as context for generating an answer. Do not claim that retrieval automatically adds information to the model's permanent memory.
+3. RAG can reduce hallucinations but cannot guarantee completely correct answers.
+4. Check all specific numbers, dates, deadlines, prices, percentages, return periods, and company policies.
+5. Do not accept invented policy figures presented as real facts.
+6. A hypothetical company example must clearly identify invented policy details and figures as fictional.
+7. Do not claim that a system retrieved information from a real document unless that document was actually provided or the example is clearly hypothetical.
+8. A heading or disclaimer alone does not make an inaccurate explanation acceptable.
+9. Mark accuracy_and_grounding as FAIL if the lesson contains a misleading technical explanation or an unsupported factual claim.
+10. Mark PASS only when the actual explanations and examples are accurate and appropriately qualified.
+
 
 2. beginner_friendly_language:
    Is the lesson understandable to a complete beginner?
@@ -129,9 +202,14 @@ STRICT RULES:
 - Each criterion must receive only PASS or FAIL.
 - No partial credit.
 - Evaluate only the actual lesson.
+- Check the actual explanations, not just headings or keywords.
+- A heading alone is never sufficient evidence.
+- A generic example alone does not prove technical accuracy.
+- Unsupported factual claims must cause accuracy_and_grounding to FAIL.
+- If uncertain whether an important factual claim is supported,
+  do not automatically PASS it.
 - Do not invent facts or examples.
 - Do not generate evidence quotations.
-- Do not pass a criterion simply because a heading exists.
 
 Return ONLY this JSON structure:
 
@@ -232,7 +310,19 @@ Do not use Markdown code fences.
             check["suggestion"] = (
                 "Add a clear explanation or example to the lesson."
             )
+    # Deterministic safeguard for unsupported policy claims.
+    policy_findings = detect_unsupported_policy_claims(lesson)
 
+    if policy_findings:
+        checks["accuracy_and_grounding"]["status"] = "FAIL"
+        checks["accuracy_and_grounding"]["reason"] = (
+            "Potentially unsupported policy claims detected: "
+            + "; ".join(policy_findings)
+        )
+        checks["accuracy_and_grounding"]["suggestion"] = (
+            "Remove unsupported policy figures and claims, "
+            "or clearly identify them as hypothetical examples."
+        )
     all_passed = all(
         checks[item]["status"] == "PASS"
         for item in RUBRIC

@@ -1,4 +1,5 @@
 langgraph
+langchain-core
 google-genai
 streamlit
 python-dotenv
